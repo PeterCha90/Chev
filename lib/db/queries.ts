@@ -12,49 +12,55 @@ import {
   lt,
   type SQL,
 } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
 
 import {
   user,
   chat,
-  type User,
   document,
   type Suggestion,
   suggestion,
   message,
   vote,
   type DBMessage,
-  type Chat,
   stream,
 } from './schema';
 import type { ArtifactKind } from '@/components/artifact';
 import { generateUUID } from '../utils';
 import { generateHashedPassword } from './utils';
 import type { VisibilityType } from '@/components/visibility-selector';
+import type { InferModel } from 'drizzle-orm';
+
+type User = InferModel<typeof user>;
+type Chat = InferModel<typeof chat>;
 
 // Optionally, if not using email/pass login, you can
 // use the Drizzle adapter for Auth.js / NextAuth
 // https://authjs.dev/reference/adapter/drizzle
 
-// biome-ignore lint: Forbidden non-null assertion.
-const client = postgres(process.env.POSTGRES_URL!);
-const db = drizzle(client);
+const sqlite = new Database('sqlite.db');
+const db = drizzle(sqlite);
 
-export async function getUser(email: string): Promise<Array<User>> {
+export async function getUser(name: string): Promise<Array<User>> {
   try {
-    return await db.select().from(user).where(eq(user.email, email));
+    return await db.select().from(user).where(eq(user.name, name));
   } catch (error) {
     console.error('Failed to get user from database');
     throw error;
   }
 }
 
-export async function createUser(email: string, password: string) {
-  const hashedPassword = generateHashedPassword(password);
-
+export async function createUser(name: string) {
   try {
-    return await db.insert(user).values({ email, password: hashedPassword });
+    const [newUser] = await db
+      .insert(user)
+      .values({
+        id: generateUUID(),
+        name,
+      })
+      .returning();
+    return newUser;
   } catch (error) {
     console.error('Failed to create user in database');
     throw error;
@@ -62,14 +68,17 @@ export async function createUser(email: string, password: string) {
 }
 
 export async function createGuestUser() {
-  const email = `guest-${Date.now()}`;
-  const password = generateHashedPassword(generateUUID());
+  const name = `guest-${Date.now()}`;
 
   try {
-    return await db.insert(user).values({ email, password }).returning({
-      id: user.id,
-      email: user.email,
-    });
+    const [newUser] = await db
+      .insert(user)
+      .values({
+        id: generateUUID(),
+        name,
+      })
+      .returning();
+    return newUser;
   } catch (error) {
     console.error('Failed to create guest user in database');
     throw error;
@@ -88,13 +97,17 @@ export async function saveChat({
   visibility: VisibilityType;
 }) {
   try {
-    return await db.insert(chat).values({
-      id,
-      createdAt: new Date(),
-      userId,
-      title,
-      visibility,
-    });
+    const [newChat] = await db
+      .insert(chat)
+      .values({
+        id,
+        createdAt: new Date(),
+        userId,
+        title,
+        visibility,
+      })
+      .returning();
+    return newChat;
   } catch (error) {
     console.error('Failed to save chat in database');
     throw error;
@@ -107,11 +120,11 @@ export async function deleteChatById({ id }: { id: string }) {
     await db.delete(message).where(eq(message.chatId, id));
     await db.delete(stream).where(eq(stream.chatId, id));
 
-    const [chatsDeleted] = await db
+    const [deletedChat] = await db
       .delete(chat)
       .where(eq(chat.id, id))
       .returning();
-    return chatsDeleted;
+    return deletedChat;
   } catch (error) {
     console.error('Failed to delete chat by id from database');
     throw error;
@@ -202,7 +215,8 @@ export async function saveMessages({
   messages: Array<DBMessage>;
 }) {
   try {
-    return await db.insert(message).values(messages);
+    const newMessages = await db.insert(message).values(messages).returning();
+    return newMessages;
   } catch (error) {
     console.error('Failed to save messages in database', error);
     throw error;
@@ -235,21 +249,27 @@ export async function voteMessage({
     const [existingVote] = await db
       .select()
       .from(vote)
-      .where(and(eq(vote.messageId, messageId)));
+      .where(and(eq(vote.messageId, messageId), eq(vote.chatId, chatId)));
 
     if (existingVote) {
-      return await db
+      const [updatedVote] = await db
         .update(vote)
         .set({ isUpvoted: type === 'up' })
-        .where(and(eq(vote.messageId, messageId), eq(vote.chatId, chatId)));
+        .where(and(eq(vote.messageId, messageId), eq(vote.chatId, chatId)))
+        .returning();
+      return updatedVote;
     }
-    return await db.insert(vote).values({
-      chatId,
-      messageId,
-      isUpvoted: type === 'up',
-    });
+    const [newVote] = await db
+      .insert(vote)
+      .values({
+        chatId,
+        messageId,
+        isUpvoted: type === 'up',
+      })
+      .returning();
+    return newVote;
   } catch (error) {
-    console.error('Failed to upvote message in database', error);
+    console.error('Failed to vote message in database');
     throw error;
   }
 }

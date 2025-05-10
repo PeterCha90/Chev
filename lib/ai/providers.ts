@@ -3,35 +3,23 @@ import {
   extractReasoningMiddleware,
   wrapLanguageModel,
 } from 'ai';
-import { xai } from '@ai-sdk/xai';
-import { isTestEnvironment } from '../constants';
-import {
-  artifactModel,
-  chatModel,
-  reasoningModel,
-  titleModel,
-} from './models.test';
+import { ollama } from 'ollama-ai-provider';
+// import { isTestEnvironment } from '../constants';
 
-export const myProvider = isTestEnvironment
-  ? customProvider({
-      languageModels: {
-        'chat-model': chatModel,
-        'chat-model-reasoning': reasoningModel,
-        'title-model': titleModel,
-        'artifact-model': artifactModel,
-      },
-    })
-  : customProvider({
-      languageModels: {
-        'chat-model': xai('grok-2-vision-1212'),
-        'chat-model-reasoning': wrapLanguageModel({
-          model: xai('grok-3-mini-beta'),
-          middleware: extractReasoningMiddleware({ tagName: 'think' }),
-        }),
-        'title-model': xai('grok-2-1212'),
-        'artifact-model': xai('grok-2-1212'),
-      },
-      imageModels: {
-        'small-model': xai.image('grok-2-image'),
-      },
-    });
+// Ollama 서버 URL 설정
+// process.env.OLLAMA_HOST = 'http://localhost:11434';
+
+// tools를 지원하는 모델로 변경
+const DEFAULT_MODEL = 'qwen2.5:7b';
+
+export const myProvider = customProvider({
+  languageModels: {
+    'chat-model': ollama(DEFAULT_MODEL),
+    'chat-model-reasoning': wrapLanguageModel({
+      model: ollama(DEFAULT_MODEL),
+      middleware: extractReasoningMiddleware({ tagName: 'think' }),
+    }),
+    'title-model': ollama(DEFAULT_MODEL),
+    'artifact-model': ollama(DEFAULT_MODEL),
+  },
+});

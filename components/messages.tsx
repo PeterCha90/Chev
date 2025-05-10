@@ -9,6 +9,7 @@ import { motion } from 'framer-motion';
 import { useMessages } from '@/hooks/use-messages';
 
 interface MessagesProps {
+  username: string;
   chatId: string;
   status: UseChatHelpers['status'];
   votes: Array<Vote> | undefined;
@@ -20,6 +21,7 @@ interface MessagesProps {
 }
 
 function PureMessages({
+  username,
   chatId,
   status,
   votes,
@@ -44,7 +46,7 @@ function PureMessages({
       ref={messagesContainerRef}
       className="flex flex-col min-w-0 gap-6 flex-1 overflow-y-scroll pt-4 relative"
     >
-      {messages.length === 0 && <Greeting />}
+      {messages.length === 0 && <Greeting name={username} />}
 
       {messages.map((message, index) => (
         <PreviewMessage

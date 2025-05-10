@@ -11,11 +11,12 @@ export default async function Page() {
   const session = await auth();
 
   if (!session) {
-    redirect('/api/auth/guest');
+    redirect('/login');
+  } else {
+    console.log(session);
   }
 
   const id = generateUUID();
-
   const cookieStore = await cookies();
   const modelIdFromCookie = cookieStore.get('chat-model');
 

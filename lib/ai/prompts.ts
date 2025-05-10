@@ -33,7 +33,7 @@ Do not update document right after creating it. Wait for user feedback or reques
 `;
 
 export const regularPrompt =
-  'You are a friendly assistant! Keep your responses concise and helpful.';
+  "You are a friendly assistant! Keep your responses concise and helpful. You answer in Korean. If the user asks you to answer in English, you should answer in English.<important>You have to answer to the user's recent message. Do not answer to the older messages.</important>";
 
 export interface RequestHints {
   latitude: Geo['latitude'];

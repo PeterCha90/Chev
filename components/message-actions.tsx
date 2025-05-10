@@ -63,12 +63,12 @@ export function PureMessageActions({
           <TooltipContent>Copy</TooltipContent>
         </Tooltip>
 
-        <Tooltip>
+        {/* <Tooltip>
           <TooltipTrigger asChild>
             <Button
               data-testid="message-upvote"
               className="py-1 px-2 h-fit text-muted-foreground !pointer-events-auto"
-              disabled={vote?.isUpvoted}
+              disabled={vote?.isUpvoted === '1'}
               variant="outline"
               onClick={async () => {
                 const upvote = fetch('/api/vote', {
@@ -77,6 +77,7 @@ export function PureMessageActions({
                     chatId,
                     messageId: message.id,
                     type: 'up',
+                    credentials: 'include', // ← 추가!
                   }),
                 });
 
@@ -97,7 +98,7 @@ export function PureMessageActions({
                           {
                             chatId,
                             messageId: message.id,
-                            isUpvoted: true,
+                            isUpvoted: '1',
                           },
                         ];
                       },
@@ -150,7 +151,7 @@ export function PureMessageActions({
                           {
                             chatId,
                             messageId: message.id,
-                            isUpvoted: false,
+                            isUpvoted: '0',
                           },
                         ];
                       },
@@ -167,7 +168,7 @@ export function PureMessageActions({
             </Button>
           </TooltipTrigger>
           <TooltipContent>Downvote Response</TooltipContent>
-        </Tooltip>
+        </Tooltip> */}
       </div>
     </TooltipProvider>
   );

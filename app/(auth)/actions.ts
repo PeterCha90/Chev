@@ -7,8 +7,7 @@ import { createUser, getUser } from '@/lib/db/queries';
 import { signIn } from './auth';
 
 const authFormSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
+  name: z.string().min(1),
 });
 
 export interface LoginActionState {
@@ -21,13 +20,17 @@ export const login = async (
 ): Promise<LoginActionState> => {
   try {
     const validatedData = authFormSchema.parse({
-      email: formData.get('email'),
-      password: formData.get('password'),
+      name: formData.get('name'),
     });
 
+    let users = await getUser(validatedData.name);
+    if (users.length === 0) {
+      await createUser(validatedData.name);
+      users = await getUser(validatedData.name);
+    }
+
     await signIn('credentials', {
-      email: validatedData.email,
-      password: validatedData.password,
+      name: validatedData.name,
       redirect: false,
     });
 
@@ -47,8 +50,8 @@ export interface RegisterActionState {
     | 'in_progress'
     | 'success'
     | 'failed'
-    | 'user_exists'
-    | 'invalid_data';
+    | 'invalid_data'
+    | 'user_exists';
 }
 
 export const register = async (
@@ -57,19 +60,17 @@ export const register = async (
 ): Promise<RegisterActionState> => {
   try {
     const validatedData = authFormSchema.parse({
-      email: formData.get('email'),
-      password: formData.get('password'),
+      name: formData.get('name'),
     });
 
-    const [user] = await getUser(validatedData.email);
+    const [user] = await getUser(validatedData.name);
 
     if (user) {
       return { status: 'user_exists' } as RegisterActionState;
     }
-    await createUser(validatedData.email, validatedData.password);
+    await createUser(validatedData.name);
     await signIn('credentials', {
-      email: validatedData.email,
-      password: validatedData.password,
+      name: validatedData.name,
       redirect: false,
     });
 

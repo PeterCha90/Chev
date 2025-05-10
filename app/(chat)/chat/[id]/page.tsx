@@ -21,7 +21,7 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
   const session = await auth();
 
   if (!session) {
-    redirect('/api/auth/guest');
+    redirect('/login');
   }
 
   if (chat.visibility === 'private') {
@@ -38,16 +38,27 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
     id,
   });
 
+  function safeJsonParse<T>(input: any, fallback: T): T {
+    if (typeof input === 'string') {
+      try {
+        return JSON.parse(input);
+      } catch {
+        return fallback;
+      }
+    }
+    if (input == null) return fallback;
+    return input;
+  }
+
   function convertToUIMessages(messages: Array<DBMessage>): Array<UIMessage> {
     return messages.map((message) => ({
       id: message.id,
-      parts: message.parts as UIMessage['parts'],
+      parts: safeJsonParse(message.parts, []),
       role: message.role as UIMessage['role'],
       // Note: content will soon be deprecated in @ai-sdk/react
       content: '',
       createdAt: message.createdAt,
-      experimental_attachments:
-        (message.attachments as Array<Attachment>) ?? [],
+      experimental_attachments: safeJsonParse(message.attachments, []),
     }));
   }
 

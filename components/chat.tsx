@@ -96,10 +96,10 @@ export function Chat({
     }
   }, [query, append, hasAppendedQuery, id]);
 
-  const { data: votes } = useSWR<Array<Vote>>(
-    messages.length >= 2 ? `/api/vote?chatId=${id}` : null,
-    fetcher,
-  );
+  // const { data: votes } = useSWR<Array<Vote>>(
+  //   messages.length >= 2 ? `/api/vote?chatId=${id}` : null,
+  //   fetcher,
+  // );
 
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
@@ -124,9 +124,10 @@ export function Chat({
         />
 
         <Messages
+          username={session.user.name ? session.user.name : ''}
           chatId={id}
           status={status}
-          votes={votes}
+          votes={[]}
           messages={messages}
           setMessages={setMessages}
           reload={reload}
@@ -167,7 +168,7 @@ export function Chat({
         messages={messages}
         setMessages={setMessages}
         reload={reload}
-        votes={votes}
+        votes={[]}
         isReadonly={isReadonly}
         selectedVisibilityType={visibilityType}
       />

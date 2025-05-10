@@ -50,19 +50,25 @@ export function SidebarUserNav({ user }: { user: User }) {
             ) : (
               <SidebarMenuButton
                 data-testid="user-nav-button"
-                className="data-[state=open]:bg-sidebar-accent bg-background data-[state=open]:text-sidebar-accent-foreground h-10"
+                className="relative flex items-center data-[state=open]:bg-sidebar-accent bg-background data-[state=open]:text-sidebar-accent-foreground h-10"
               >
                 <Image
                   src={`https://avatar.vercel.sh/${user.email}`}
-                  alt={user.email ?? 'User Avatar'}
+                  alt={user.name ?? 'User Avatar'}
                   width={24}
                   height={24}
-                  className="rounded-full"
+                  className="rounded-full z-10"
                 />
-                <span data-testid="user-email" className="truncate">
-                  {isGuest ? 'Guest' : user?.email}
-                </span>
-                <ChevronUp className="ml-auto" />
+                <div
+                  data-testid="user-email"
+                  className="absolute inset-x-0 flex justify-center items-center pointer-events-none"
+                  style={{ height: '100%' }}
+                >
+                  <div className="text-center w-full font-bold">
+                    {isGuest ? 'Guest' : user?.name}
+                  </div>
+                </div>
+                <ChevronUp className="ml-auto z-10" />
               </SidebarMenuButton>
             )}
           </DropdownMenuTrigger>

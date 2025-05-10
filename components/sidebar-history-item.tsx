@@ -1,4 +1,3 @@
-import type { Chat } from '@/lib/db/schema';
 import {
   SidebarMenuAction,
   SidebarMenuButton,
@@ -25,6 +24,9 @@ import {
 } from './icons';
 import { memo } from 'react';
 import { useChatVisibility } from '@/hooks/use-chat-visibility';
+import type { InferModel } from 'drizzle-orm';
+import { chat } from '@/lib/db/schema';
+type Chat = InferModel<typeof chat>;
 
 const PureChatItem = ({
   chat,
