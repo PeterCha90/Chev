@@ -130,7 +130,11 @@ const PurePreviewMessage = ({
                             message.role === 'user',
                         })}
                       >
-                        <Markdown>{sanitizeText(part.text)}</Markdown>
+                        <Markdown>
+                          {Array.isArray(part.text)
+                            ? sanitizeText(part.text[0]?.text || '')
+                            : sanitizeText(part.text || '')}
+                        </Markdown>
                       </div>
                     </div>
                   );

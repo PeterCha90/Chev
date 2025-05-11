@@ -1,63 +1,72 @@
 import {
+  streamText,
+  type Message,
+  type UIMessage,
+  type TextPart,
+  generateText,
   appendClientMessage,
-  appendResponseMessages,
   createDataStream,
   smoothStream,
-  streamText,
+  appendResponseMessages,
 } from 'ai';
-import { auth, type UserType } from '@/app/(auth)/auth';
-import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
-import {
-  createStreamId,
-  deleteChatById,
-  getChatById,
-  getMessageCountByUserId,
-  getMessagesByChatId,
-  getStreamIdsByChatId,
-  saveChat,
-  saveMessages,
-} from '@/lib/db/queries';
 import { generateUUID, getTrailingMessageId } from '@/lib/utils';
+import { geolocation } from '@vercel/functions';
+import { createOllama } from 'ollama-ai-provider';
+import { auth, type UserType } from '@/app/(auth)/auth';
 import { generateTitleFromUserMessage } from '../../actions';
+import { type RequestHints, systemPrompt } from '@/lib/ai/prompts';
+import { postRequestBodySchema, type PostRequestBody } from './schema';
 import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
-import { isProductionEnvironment } from '@/lib/constants';
-import { myProvider } from '@/lib/ai/providers';
-import { entitlementsByUserType } from '@/lib/ai/entitlements';
-import { postRequestBodySchema, type PostRequestBody } from './schema';
-import { geolocation } from '@vercel/functions';
 import {
-  createResumableStreamContext,
-  type ResumableStreamContext,
-} from 'resumable-stream';
+  deleteChatById,
+  getChatById,
+  getMessageCountByUserId,
+  getMessagesByChatId,
+  saveChat,
+  getUser,
+  createUser,
+  saveMessages,
+  createStreamId,
+} from '@/lib/db/queries';
+import { isProductionEnvironment } from '@/lib/constants';
 import { after } from 'next/server';
-import type { Chat } from '@/lib/db/schema';
-import { differenceInSeconds } from 'date-fns';
+import {
+  type ResumableStreamContext,
+  createResumableStreamContext,
+} from 'resumable-stream';
 
 export const maxDuration = 60;
 
-let globalStreamContext: ResumableStreamContext | null = null;
-
-function getStreamContext() {
-  if (!globalStreamContext) {
+function safeJsonParse<T>(input: any, fallback: T): T {
+  if (typeof input === 'string') {
     try {
-      globalStreamContext = createResumableStreamContext({
-        waitUntil: after,
-      });
-    } catch (error: any) {
-      if (error.message.includes('REDIS_URL')) {
-        console.log(
-          ' > Resumable streams are disabled due to missing REDIS_URL',
-        );
-      } else {
-        console.error(error);
-      }
+      return JSON.parse(input);
+    } catch {
+      return fallback;
     }
   }
+  if (input == null) return fallback;
+  return input;
+}
 
-  return globalStreamContext;
+function toUIMessages(messages: Array<any>): Array<UIMessage> {
+  return messages.map((message) => {
+    const parts = safeJsonParse<Array<TextPart>>(message.parts, []);
+    const textContent =
+      parts.length > 0 && parts[0].type === 'text' ? parts[0].text : '';
+
+    return {
+      id: message.id,
+      parts: parts,
+      role: message.role as UIMessage['role'],
+      content: textContent,
+      createdAt: message.createdAt,
+      experimental_attachments: safeJsonParse(message.attachments, []),
+    };
+  });
 }
 
 export async function POST(request: Request) {
@@ -70,31 +79,39 @@ export async function POST(request: Request) {
     return new Response('Invalid request body', { status: 400 });
   }
 
+  const { id, message, selectedChatModel, selectedVisibilityType } =
+    requestBody;
+
+  if (!message.content || message.content.length === 0) {
+    return new Response('Messages are required', { status: 400 });
+  }
+
+  const ollama = createOllama({});
+  const session = await auth();
+
+  if (!session?.user?.name) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
   try {
-    const { id, message, selectedChatModel, selectedVisibilityType } =
-      requestBody;
+    // 사용자가 존재하는지 확인하고, 없다면 생성
+    const existingUsers = await getUser(session.user.name);
+    let user: { id: string; name: string };
 
-    const session = await auth();
-
-    if (!session?.user) {
-      return new Response('Unauthorized', { status: 401 });
+    if (existingUsers.length === 0) {
+      await createUser(session.user.name);
+      const [newUser] = await getUser(session.user.name);
+      user = newUser;
+    } else {
+      [user] = existingUsers;
     }
 
     const userType: UserType = session.user.type;
 
     const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
+      id: user.id,
       differenceInHours: 24,
     });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new Response(
-        'You have exceeded your maximum number of messages for the day! Please try again later.',
-        {
-          status: 429,
-        },
-      );
-    }
 
     const chat = await getChatById({ id });
 
@@ -105,22 +122,42 @@ export async function POST(request: Request) {
 
       await saveChat({
         id,
-        userId: session.user.id,
+        userId: user.id,
         title,
         visibility: selectedVisibilityType,
       });
     } else {
-      if (chat.userId !== session.user.id) {
+      if (!chat || chat.userId !== user.id) {
         return new Response('Forbidden', { status: 403 });
       }
     }
 
+    // 사용자 메시지 저장 ✍️ 대화 Context를 LLM이 기억하기 위해 저장
+    await saveMessages({
+      messages: [
+        {
+          chatId: id,
+          id: message.id,
+          role: 'user',
+          parts: JSON.stringify(message.parts),
+          attachments: JSON.stringify(message.experimental_attachments ?? []),
+          createdAt: new Date(),
+        },
+      ],
+    });
+
     const previousMessages = await getMessagesByChatId({ id });
+    const uiMessages = toUIMessages(previousMessages);
 
     const messages = appendClientMessage({
-      // @ts-expect-error: todo add type conversion from DBMessage[] to UIMessage[]
-      messages: previousMessages,
-      message,
+      messages: uiMessages,
+      message: {
+        id: message.id,
+        role: 'user',
+        content: message.content,
+        parts: message.parts,
+        experimental_attachments: message.experimental_attachments,
+      },
     });
 
     const { longitude, latitude, city, country } = geolocation(request);
@@ -132,82 +169,80 @@ export async function POST(request: Request) {
       country,
     };
 
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: 'user',
-          parts: message.parts,
-          attachments: message.experimental_attachments ?? [],
-          createdAt: new Date(),
-        },
-      ],
-    });
-
     const streamId = generateUUID();
     await createStreamId({ streamId, chatId: id });
 
     const stream = createDataStream({
       execute: (dataStream) => {
         const result = streamText({
-          model: myProvider.languageModel(selectedChatModel),
+          model: ollama('qwen2.5:7b'),
           system: systemPrompt({ selectedChatModel, requestHints }),
-          messages,
-          maxSteps: 5,
-          experimental_activeTools:
-            selectedChatModel === 'chat-model-reasoning'
-              ? []
-              : [
-                  'getWeather',
-                  'createDocument',
-                  'updateDocument',
-                  'requestSuggestions',
-                ],
+          messages: messages.map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          })),
+          maxSteps: 10,
+          experimental_activeTools: [],
           experimental_transform: smoothStream({ chunking: 'word' }),
           experimental_generateMessageId: generateUUID,
-          tools: {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-          },
+          tools: {},
           onFinish: async ({ response }) => {
             if (session.user?.id) {
               try {
-                const assistantId = getTrailingMessageId({
-                  messages: response.messages.filter(
-                    (message) => message.role === 'assistant',
-                  ),
-                });
+                console.log('Response messages:', response.messages);
+                const assistantMessages = response.messages.filter(
+                  (message) => message.role === 'assistant',
+                );
+                console.log('Assistant messages:', assistantMessages);
 
-                if (!assistantId) {
-                  throw new Error('No assistant message found!');
+                let responseMessages = response.messages;
+                if (!responseMessages || responseMessages.length === 0) {
+                  const lastUserMessage = messages.find(
+                    (msg) => msg.role === 'user',
+                  );
+                  if (lastUserMessage) {
+                    const { text: responseText } = await generateText({
+                      model: ollama('qwen2.5:7b'),
+                      system: systemPrompt({ selectedChatModel, requestHints }),
+                      prompt: lastUserMessage.content,
+                    });
+
+                    responseMessages = [
+                      {
+                        role: 'assistant',
+                        content: responseText,
+                        id: generateUUID(),
+                      },
+                    ];
+                  }
                 }
-
-                const [, assistantMessage] = appendResponseMessages({
-                  messages: [message],
-                  responseMessages: response.messages,
-                });
-
-                await saveMessages({
-                  messages: [
-                    {
-                      id: assistantId,
-                      chatId: id,
-                      role: assistantMessage.role,
-                      parts: assistantMessage.parts,
-                      attachments:
-                        assistantMessage.experimental_attachments ?? [],
-                      createdAt: new Date(),
-                    },
-                  ],
-                });
-              } catch (_) {
-                console.error('Failed to save chat');
+                // 어시스턴트 메시지 저장
+                if (responseMessages && responseMessages.length > 0) {
+                  const assistantMessage = responseMessages[0];
+                  await saveMessages({
+                    messages: [
+                      {
+                        id: assistantMessage.id,
+                        chatId: id,
+                        role: assistantMessage.role,
+                        parts: JSON.stringify([
+                          { type: 'text', text: assistantMessage.content },
+                        ]),
+                        attachments: JSON.stringify([]),
+                        createdAt: new Date(),
+                      },
+                    ],
+                  });
+                } else {
+                  console.error(
+                    'No assistant message found!',
+                    responseMessages,
+                  );
+                }
+              } catch (error) {
+                console.error('Failed to save chat:', error);
+                console.error('Response:', response);
+                console.error('Session user:', session.user);
               }
             }
           },
@@ -223,21 +258,17 @@ export async function POST(request: Request) {
           sendReasoning: true,
         });
       },
-      onError: () => {
+      onError: (error) => {
+        console.log('--------------------------------');
+        console.error(error);
+        console.log('--------------------------------');
         return 'Oops, an error occurred!';
       },
     });
 
-    const streamContext = getStreamContext();
-
-    if (streamContext) {
-      return new Response(
-        await streamContext.resumableStream(streamId, () => stream),
-      );
-    } else {
-      return new Response(stream);
-    }
-  } catch (_) {
+    return new Response(stream);
+  } catch (error) {
+    console.error(error);
     return new Response('An error occurred while processing your request!', {
       status: 500,
     });
@@ -245,13 +276,6 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const streamContext = getStreamContext();
-  const resumeRequestedAt = new Date();
-
-  if (!streamContext) {
-    return new Response(null, { status: 204 });
-  }
-
   const { searchParams } = new URL(request.url);
   const chatId = searchParams.get('chatId');
 
@@ -265,7 +289,7 @@ export async function GET(request: Request) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  let chat: Chat;
+  let chat: any;
 
   try {
     chat = await getChatById({ id: chatId });
@@ -273,70 +297,18 @@ export async function GET(request: Request) {
     return new Response('Not found', { status: 404 });
   }
 
-  if (!chat) {
-    return new Response('Not found', { status: 404 });
-  }
-
-  if (chat.visibility === 'private' && chat.userId !== session.user.id) {
+  if (!chat || chat.userId !== session.user.id) {
     return new Response('Forbidden', { status: 403 });
   }
 
-  const streamIds = await getStreamIdsByChatId({ chatId });
+  const messages = await getMessagesByChatId({ id: chatId });
+  const mostRecentMessage = messages.at(-1);
 
-  if (!streamIds.length) {
-    return new Response('No streams found', { status: 404 });
+  if (!mostRecentMessage) {
+    return new Response('No messages found', { status: 404 });
   }
 
-  const recentStreamId = streamIds.at(-1);
-
-  if (!recentStreamId) {
-    return new Response('No recent stream found', { status: 404 });
-  }
-
-  const emptyDataStream = createDataStream({
-    execute: () => {},
-  });
-
-  const stream = await streamContext.resumableStream(
-    recentStreamId,
-    () => emptyDataStream,
-  );
-
-  /*
-   * For when the generation is streaming during SSR
-   * but the resumable stream has concluded at this point.
-   */
-  if (!stream) {
-    const messages = await getMessagesByChatId({ id: chatId });
-    const mostRecentMessage = messages.at(-1);
-
-    if (!mostRecentMessage) {
-      return new Response(emptyDataStream, { status: 200 });
-    }
-
-    if (mostRecentMessage.role !== 'assistant') {
-      return new Response(emptyDataStream, { status: 200 });
-    }
-
-    const messageCreatedAt = new Date(mostRecentMessage.createdAt);
-
-    if (differenceInSeconds(resumeRequestedAt, messageCreatedAt) > 15) {
-      return new Response(emptyDataStream, { status: 200 });
-    }
-
-    const restoredStream = createDataStream({
-      execute: (buffer) => {
-        buffer.writeData({
-          type: 'append-message',
-          message: JSON.stringify(mostRecentMessage),
-        });
-      },
-    });
-
-    return new Response(restoredStream, { status: 200 });
-  }
-
-  return new Response(stream, { status: 200 });
+  return Response.json(mostRecentMessage, { status: 200 });
 }
 
 export async function DELETE(request: Request) {
@@ -356,7 +328,7 @@ export async function DELETE(request: Request) {
   try {
     const chat = await getChatById({ id });
 
-    if (chat.userId !== session.user.id) {
+    if (!chat || chat.userId !== session.user.id) {
       return new Response('Forbidden', { status: 403 });
     }
 
@@ -369,4 +341,11 @@ export async function DELETE(request: Request) {
       status: 500,
     });
   }
+}
+
+function excludeContent(message: Message): Message {
+  return {
+    ...message,
+    content: '',
+  };
 }
